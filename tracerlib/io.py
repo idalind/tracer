@@ -64,9 +64,45 @@ def load_IMGT_seqs(file):
             seqs[record.id] = str(record.seq)
     return (seqs)
 
+def parse_assembled_file(output_dir, cell_name, assembled_file):
+    if os.path.exists(assembled_file):
+        outfile = "{output_dir}/Trinity_output/{cell_name}.fasta".format(output_dir=output_dir,
+                                                                           cell_name=cell_name)
+    store_seq = False
+    header_count = 0
+    seq_count = 0
+    written = False
+    with open(assembled_file, "r") as input:
+        with open(outfile, "w") as output:
+            seq = ""
+            for line in input:
+                if line.startswith(">"):
+                    header_count += 1
+                    if header_count > 1:
+                        seq_count += 1
+                        seq_len = len(seq)
+                        seq += "\n"
+                        count = seq_count
+                        header = "\n>TRINITY_DN0_c0_g0_i{} len={}\n".format(str(count), str(seq_len))
+                        output.write(header)
+                        output.write(seq)
+                    seq = ""
 
+                elif header_count > 0:
+                    if len(line) > 0:
+                        seq += line.strip()
+                # Code to include last sequence
+                elif len(line) == 0 or line.startswith("\n"):
+                    if len(seq) > 0:
+                        header_count += 1
+                        seq_len = len(seq)
+                        header = ">TRINITY_DN0_c0_g0_i{} len={}\n".format(str(count), str(seq_len))
+                        output.write(header)
+                        output.write(seq)
+
+       
 def parse_IgBLAST(receptor, loci, output_dir, cell_name, raw_seq_dir, species,
-                  seq_method, max_junc_len=50, invariant_seqs=None):
+                  seq_method, assembled_file, max_junc_len=50, invariant_seqs=None):
     IMGT_seqs = dict()
     # expecting_D = dict()
 
@@ -95,9 +131,13 @@ def parse_IgBLAST(receptor, loci, output_dir, cell_name, raw_seq_dir, species,
     locus_names = ["_".join([receptor, x]) for x in loci]
     all_locus_data = defaultdict(dict)
     for locus in locus_names:
-        file = "{output_dir}/IgBLAST_output/{cell_name}_{locus}.IgBLASTOut".format(
-            output_dir=output_dir,
-            cell_name=cell_name, locus=locus)
+        if assembled_file is not None:
+            file = "{output_dir}/IgBLAST_output/{cell_name}.IgBLASTOut".format(
+                output_dir=output_dir, cell_name=cell_name)
+        else:
+            file = "{output_dir}/IgBLAST_output/{cell_name}_{locus}.IgBLASTOut".format(
+                output_dir=output_dir, cell_name=cell_name, locus=locus)
+
         if os.path.isfile(file):
             igblast_result_chunks = split_igblast_file(file)
 
@@ -110,7 +150,7 @@ def parse_IgBLAST(receptor, loci, output_dir, cell_name, raw_seq_dir, species,
     cell = find_possible_alignments(all_locus_data, locus_names, cell_name,
                                     IMGT_seqs, output_dir, species, seq_method,
                                     invariant_seqs, loci_for_segments, receptor,
-                                    loci, max_junc_len)
+                                    loci, max_junc_len, assembled_file)
     return (cell)
 
 

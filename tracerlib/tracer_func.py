@@ -99,7 +99,7 @@ def process_chunk(chunk):
 def find_possible_alignments(sample_dict, locus_names, cell_name, IMGT_seqs,
                              output_dir, species, seq_method,
                              invariant_seqs, loci_for_segments, receptor, loci,
-                             max_junc_string_length):
+                             max_junc_string_length, assembled_file):
     alignment_dict = defaultdict(dict)
     recombinants = {}
     for locus in locus_names:
@@ -161,8 +161,11 @@ def find_possible_alignments(sample_dict, locus_names, cell_name, IMGT_seqs,
 
                     # get original sequence from Trinity file - needed for summary of reconstructed lengths.
                     # Only use the VDJ portion found by IgBLAST
-                    trinity_file = "{output_dir}/Trinity_output/{cell_name}_{locus}.Trinity.fasta".format(
-                        locus=locus, output_dir=output_dir, cell_name=cell_name)
+                    if assembled_file is not None:
+                        trinity_file = "{}/Trinity_output/{}.fasta".format(output_dir, cell_name)
+                    else:
+                        trinity_file = "{output_dir}/Trinity_output/{cell_name}_{locus}.Trinity.fasta".format(
+                            locus=locus, output_dir=output_dir, cell_name=cell_name)
                     with open(trinity_file, 'rU') as tf:
                         for record in SeqIO.parse(tf, 'fasta'):
                             if query_name in record.id:
@@ -1135,8 +1138,7 @@ def assemble_with_trinity(trinity, receptor, loci, output_dir, cell_name,
 
 
 def run_IgBlast(igblast, receptor, loci, output_dir, cell_name, index_location,
-                ig_seqtype, species,
-                should_resume):
+                ig_seqtype, species, should_resume, assembled_file):
     print("##Running IgBLAST##")
 
     species_mapper = {
@@ -1173,10 +1175,16 @@ def run_IgBlast(igblast, receptor, loci, output_dir, cell_name, index_location,
     # Taken from http://stackoverflow.com/questions/11269575/how-to-hide-output-of-subprocess-in-python-2-7
     DEVNULL = open(os.devnull, 'wb')
 
+    if assembled_file is not None:
+        tracerlib.io.parse_assembled_file(output_dir, cell_name, assembled_file)
+        trinity_fasta = "{}/Trinity_output/{}.fasta".format(output_dir, cell_name)
+
     for locus in locus_names:
-        print("##{}##".format(locus))
-        trinity_fasta = "{}/Trinity_output/{}_{}.Trinity.fasta".format(
-            output_dir, cell_name, locus)
+        if assembled_file is None:
+            print("##{}##".format(locus))
+            trinity_fasta = "{}/Trinity_output/{}_{}.Trinity.fasta".format(output_dir, cell_name, locus)
+
+
         if os.path.isfile(trinity_fasta):
             command = [igblast, '-germline_db_V', databases['V'],
                        '-germline_db_D', databases['D'],
@@ -1190,9 +1198,19 @@ def run_IgBlast(igblast, receptor, loci, output_dir, cell_name, index_location,
                 output_dir=output_dir,
                 cell_name=cell_name,
                 locus=locus)
+            if assembled_file is None:
+                igblast_out = "{output_dir}/IgBLAST_output/{cell_name}_{locus}.IgBLASTOut".format(
+                        output_dir=output_dir, cell_name=cell_name, locus=locus)
+            else:
+                igblast_out = "{output_dir}/IgBLAST_output/{cell_name}.IgBLASTOut".format(
+                        output_dir=output_dir, cell_name=cell_name)
+
             with open(igblast_out, 'w') as out:
                 # print(" ").join(pipes.quote(s) for s in command)
                 subprocess.check_call(command, stdout=out, stderr=DEVNULL)
+
+            if assembled_file is not None:
+                break
 
     DEVNULL.close()
 

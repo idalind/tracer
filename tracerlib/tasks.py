@@ -196,6 +196,9 @@ class Assembler(TracerTask):
                                 help='Species to use for reconstruction',
                                 choices=self.get_available_species(),
                                 default='Mmus')
+            parser.add_argument('--assembled_file',
+                                help='Fasta file containing already assembled sequences for the cell. Providing this \
+                                file skips the alignment and assembly steps', default=False)
             parser.add_argument('--receptor_name',
                                 help="Name of receptor to reconstruct",
                                 default='TCR')
@@ -227,7 +230,7 @@ class Assembler(TracerTask):
                                 default=50, type=int)
 
             parser.add_argument('fastq1', metavar="<FASTQ1>",
-                                help='first fastq file')
+                                help='first fastq file', nargs='?')
             parser.add_argument('fastq2', metavar="<FASTQ2>",
                                 help='second fastq file', nargs='?')
             parser.add_argument('cell_name', metavar="<CELL_NAME>",
@@ -242,6 +245,7 @@ class Assembler(TracerTask):
             self.single_end = args.single_end
             self.fastq2 = args.fastq2
             self.ncores = str(args.ncores)
+            self.assembled_file = args.assembled_file
             self.species = args.species
             self.seq_method = args.seq_method
             self.quant_method = args.quant_method
@@ -259,6 +263,7 @@ class Assembler(TracerTask):
             self.fastq1 = kwargs.get('fastq1')
             self.fastq2 = kwargs.get('fastq2')
             self.ncores = kwargs.get('ncores')
+            self.assembled_file = kwargs.get('assembled_file')
             self.species = kwargs.get('species')
             self.seq_method = kwargs.get('seq_method')
             self.quant_method = kwargs.get('quant_method')
@@ -274,34 +279,49 @@ class Assembler(TracerTask):
             config_file = kwargs.get('config_file')
 
         self.config = self.read_config(config_file)
+        if not self.assembled_file:
+            self.assembled_file = None      
+
         # self.locus_names = ["TCRA", "TCRB"]
 
         # Check the fastq config is correct
-        if not self.single_end:
-            assert self.fastq2, "Only one fastq file specified. Either set --single_end or provide second fastq."
-        else:
-            self.fastq2 = None
-            if self.fastq2:
-                print(
-                    "Two fastq files given with --single-end option. Ignoring second file.")
-            assert self.fragment_length and self.fragment_sd, \
-                'Must specify estimated average fragment length (--fragment_length)' \
-                ' and standard deviation (--fragment_sd) for use with single-end data'
-            assert self.fragment_length, \
-                'Must specify estimated average fragment length (--fragment_length) for use with single-end data'
-            assert self.fragment_sd, \
-                'Must specify estimated fragment length standard deviation (--fragment_sd) for use with single-end data'
+        if not self.assembled_file:
+            if not self.single_end:
+                assert self.fastq2, "Only one fastq file specified. Either set --single_end or provide second fastq."
+            else:
+                self.fastq2 = None
+                if self.fastq2:
+                    print(
+                        "Two fastq files given with --single-end option. Ignoring second file.")
+                assert self.fragment_length and self.fragment_sd, \
+                    'Must specify estimated average fragment length (--fragment_length)' \
+                    ' and standard deviation (--fragment_sd) for use with single-end data'
+                assert self.fragment_length, \
+                    'Must specify estimated average fragment length (--fragment_length) for use with single-end data'
+                assert self.fragment_sd, \
+                    'Must specify estimated fragment length standard deviation (--fragment_sd) for use with single-end data'
 
         # Check FASTQ files exist
-        if not os.path.isfile(self.fastq1):
-            raise OSError('2', 'FASTQ file not found', self.fastq1)
-        if not self.single_end and self.fastq2:
-            if not os.path.isfile(self.fastq2):
-                raise OSError('2', 'FASTQ file not found', self.fastq2)
+        if not self.assembled_file:
+            if not os.path.isfile(self.fastq1):
+                raise OSError('2', 'FASTQ file not found', self.fastq1)
+            if not self.single_end and self.fastq2:
+                if not os.path.isfile(self.fastq2):
+                    raise OSError('2', 'FASTQ file not found', self.fastq2)
+
+
+        # Check that fasta file containing already assembled sequences exists (if provided)
+        if self.assembled_file:
+            if not os.path.isfile(self.assembled_file):
+                raise OSError('2', 'Fasta file containing assembled sequences not found. Please \
+                    provide fasta file containing assembled sequences or run TraCeR without \
+                    --assembled_file option.', self.assembled_file)
+
+
 
     def run(self, **kwargs):
 
-        # Set-up output directories
+        # Set-up output directories 
         root_output_dir = os.path.abspath(self.output_dir)
         io.makeOutputDir(root_output_dir)
         self.output_dir = root_output_dir + "/" + self.cell_name
@@ -318,10 +338,12 @@ class Assembler(TracerTask):
             io.makeOutputDir("{}/{}".format(self.output_dir, d))
 
         # Perform TraCeR's core functions
-        self.align()
-        self.de_novo_assemble()
+        if not self.assembled_file:
+            self.align()
+            self.de_novo_assemble()
         cell = self.ig_blast()
-        self.quantify(cell)
+        if not self.assembled_file:
+            self.quantify(cell)
 
         fasta_filename = "{output_dir}/unfiltered_{receptor}_seqs/{cell_name}_{receptor}seqs.fa".format(
             output_dir=self.output_dir,
@@ -438,7 +460,8 @@ class Assembler(TracerTask):
                                 self.output_dir, self.cell_name,
                                 igblast_index_location,
                                 igblast_seqtype, self.species,
-                                self.resume_with_existing_files)
+                                self.resume_with_existing_files,
+                                self.assembled_file)
         print()
 
         with warnings.catch_warnings():
@@ -447,8 +470,8 @@ class Assembler(TracerTask):
             #                        self.species, self.seq_method, self.invariant_sequences)
             cell = io.parse_IgBLAST(self.receptor_name, self.loci,
                                     self.output_dir, self.cell_name,
-                                    imgt_seq_location,
-                                    self.species, self.seq_method,
+                                    imgt_seq_location, self.species, 
+                                    self.seq_method, self.assembled_file,
                                     self.max_junc_len)
             if cell.is_empty:
                 self.die_with_empty_cell(self.cell_name, self.output_dir,
